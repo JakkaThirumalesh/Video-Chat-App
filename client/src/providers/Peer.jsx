@@ -4,22 +4,27 @@ const PeerContext = React.createContext(null);
 
 export const usePeer = () => React.useContext(PeerContext);
 
-export const PeerProvider = (props) => {
+export const PeerProvider = ({ children }) => {
   const [remoteStream, setRemoteStream] = useState(null);
-  const peer = useMemo(
-    () =>
-      new RTCPeerConnection({
-        iceServers: [
-          {
-            urls: [
-              "stun:stun.l.google.com:19302",
-              "stun:global.stun.twilio.com:3478",
-            ],
-          },
-        ],
-      }),
-    []
-  );
+
+  const peer = useMemo(() => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: [
+            "stun:stun.l.google.com:19302",
+            "stun:global.stun.twilio.com:3478",
+          ],
+        },
+      ],
+    });
+
+    pc.addEventListener("signalingstatechange", () => {
+      console.log("📡 Signaling state:", pc.signalingState);
+    });
+
+    return pc;
+  }, []);
 
   const createOffer = async () => {
     const offer = await peer.createOffer();
@@ -28,26 +33,32 @@ export const PeerProvider = (props) => {
   };
 
   const createAnswer = async (offer) => {
-    await peer.setRemoteDescription(offer);
+    await peer.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
     return answer;
   };
 
   const setRemoteAns = async (ans) => {
-    await peer.setRemoteDescription(ans);
-  };
-
-  const sendStream = async (stream) => {
-    const tracks = stream.getTracks();
-    for (const track of tracks) {
-      peer.addTrack(track, stream);
+    if (peer.signalingState === "have-local-offer") {
+      await peer.setRemoteDescription(new RTCSessionDescription(ans));
+    } else {
+      console.warn("❌ Can't set remote answer. State is", peer.signalingState);
     }
   };
 
-  const handleTrackEvent = useCallback((e) => {
-    const streams = e.streams;
-    setRemoteStream(streams[0]);
+  const sendStream = useCallback((stream) => {
+    if (!stream) return;
+    stream.getTracks().forEach((track) => {
+      peer.addTrack(track, stream);
+    });
+  }, [peer]);
+
+  const handleTrackEvent = useCallback((event) => {
+    const [stream] = event.streams;
+    if (stream) {
+      setRemoteStream(stream);
+    }
   }, []);
 
   useEffect(() => {
@@ -68,7 +79,7 @@ export const PeerProvider = (props) => {
         remoteStream,
       }}
     >
-      {props.children}
+      {children}
     </PeerContext.Provider>
   );
 };
